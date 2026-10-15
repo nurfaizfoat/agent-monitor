@@ -55,11 +55,19 @@ setup again. An environment variable takes precedence over a saved key.
 
 ### OpenAI
 
-Use `opencode auth login`, select OpenAI, and sign in with your **ChatGPT
-subscription**, then refresh the widget. It reads the existing OpenCode OAuth
-login at `$XDG_DATA_HOME/opencode/auth.json` (default:
+Use OpenCode's `/connect`, select OpenAI, and sign in with your **ChatGPT
+subscription using browser OAuth**, then refresh the widget. In OpenCode V2,
+the widget reads the managed credential store using `opencode api get
+/api/credential`, with output captured privately. It prefers a compatible
+active login, otherwise uses a saved browser login without changing your
+active OpenCode account. Token-sharing logins can run models but cannot read
+this usage endpoint; they are skipped. If only token-sharing is configured,
+add a browser OAuth login as well.
+
+When the V2 API is unavailable, it falls back to the legacy login at
+`$XDG_DATA_HOME/opencode/auth.json` (default:
 `~/.local/share/opencode/auth.json`). It does not copy or refresh OAuth tokens.
-If your session expires, reconnect through OpenCode.
+If the browser login expires, reconnect that account through OpenCode.
 
 **An OpenAI API key cannot provide these subscription meters.** This widget
 does not show OpenAI API spending or every ChatGPT model's chat limits. The

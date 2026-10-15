@@ -7,6 +7,7 @@ import stat
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +31,9 @@ class HelpersTest(unittest.TestCase):
         env = patch.dict(os.environ, {"HOME": str(self.home), "XDG_DATA_HOME": str(self.home / "data"), "DEEPSEEK_API_KEY": ""})
         env.start()
         self.addCleanup(env.stop)
+        api = patch.object(openai.subprocess, "run", side_effect=FileNotFoundError)
+        api.start()
+        self.addCleanup(api.stop)
 
     def auth(self, data):
         target = self.home / "data/opencode/auth.json"
@@ -75,7 +79,59 @@ class HelpersTest(unittest.TestCase):
     def test_malformed_auth(self):
         self.auth([])
         self.assertTrue(balance.fetch()["needs_setup"])
-        self.assertIn("error", openai.fetch())
+        self.assertTrue(openai.fetch()["needs_setup"])
+
+    def api_credentials(self, entries):
+        return patch.object(openai.subprocess, "run", return_value=SimpleNamespace(stdout=json.dumps({"data": entries})))
+
+    def test_v2_browser_login_over_stale_legacy_and_token_sharing(self):
+        self.auth({"openai": {"type": "oauth", "access": "test-only-stale", "expires": 1}})
+        entries = [
+            {"integrationID": "openai", "active": True, "value": {
+                "type": "oauth", "methodID": "chatgpt-token-sharing", "access": "test-only-sharing"}},
+            {"integrationID": "openai", "active": False, "value": {
+                "type": "oauth", "methodID": "chatgpt-browser", "access": "test-only-browser",
+                "metadata": {"accountID": "test-only-account"}}},
+        ]
+        payload = {"rate_limit": {"primary_window": {"used_percent": 20}}}
+        with self.api_credentials(entries), patch.object(openai, "urlopen", return_value=io.StringIO(json.dumps(payload))) as request:
+            result = openai.fetch()
+        self.assertEqual(result["limits"][0]["used"], 20)
+        headers = dict(request.call_args.args[0].header_items())
+        self.assertEqual(headers["Authorization"], "Bearer test-only-browser")
+        self.assertEqual(headers["Chatgpt-account-id"], "test-only-account")
+
+    def test_v2_empty_store_does_not_revive_legacy_login(self):
+        self.auth({"openai": {"type": "oauth", "access": "test-only-stale"}})
+        with self.api_credentials([]), patch.object(openai, "urlopen") as request:
+            self.assertTrue(openai.fetch()["needs_setup"])
+        request.assert_not_called()
+
+    def test_token_sharing_is_not_reported_as_expired(self):
+        entries = [{"integrationID": "openai", "active": True, "value": {
+            "type": "oauth", "methodID": "chatgpt-token-sharing", "access": "test-only-sharing"}}]
+        with self.api_credentials(entries), patch.object(openai, "urlopen") as request:
+            result = openai.fetch()
+        self.assertIn("token-sharing", result["error"])
+        self.assertNotIn("expired", result["error"])
+        request.assert_not_called()
+
+    def test_rejected_browser_tries_another_saved_browser(self):
+        entries = [{"integrationID": "openai", "active": active, "value": {
+            "type": "oauth", "methodID": "chatgpt-browser", "access": key}}
+            for active, key in ((False, "test-only-other"), (True, "test-only-active"))]
+        payload = {"rate_limit": {"primary_window": {"used_percent": 10}}}
+        rejected = HTTPError("https://example.invalid", 401, "secret-error", {}, None)
+        with self.api_credentials(entries), patch.object(openai, "urlopen", side_effect=[rejected, io.StringIO(json.dumps(payload))]) as request:
+            self.assertIn("limits", openai.fetch())
+        self.assertEqual(request.call_args_list[0].args[0].get_header("Authorization"), "Bearer test-only-active")
+        self.assertEqual(request.call_count, 2)
+
+    def test_expired_browser_does_not_make_request(self):
+        self.auth({"openai": {"type": "oauth", "access": "test-only-stale", "expires": 1}})
+        with patch.object(openai, "urlopen") as request:
+            self.assertIn("expired", openai.fetch()["error"])
+        request.assert_not_called()
 
     def test_openai_windows_and_clamping(self):
         result = openai.normalize({"plan_type": "plus", "rate_limit": {
