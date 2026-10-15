@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "nurfaizfoat.agent-monitor",
+  "name": "Agent Monitor",
+  "version": "2.1.0",
+  "author": "Nurfaizfoat",
+  "description": "OpenAI subscription limits and DeepSeek prepaid balance",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "Panel.qml" },
+  "barWidget": {
+    "displayName": "Agent Monitor",
+    "description": "Five-hour and weekly OpenAI limits plus DeepSeek API credits",
+    "category": "AI",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
